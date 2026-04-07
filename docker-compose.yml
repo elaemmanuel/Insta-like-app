@@ -1,0 +1,53 @@
+# version: "3.9"
+
+# services:
+#   app:
+#     build: .
+#     container_name: fastapi-app
+#     ports:
+#       - "8000:8000"
+#     volumes:
+#       - .:/app
+#     depends_on:
+#       - redis
+#     env_file:
+#       - .env   
+
+#   redis:
+#     image: redis:latest
+#     container_name: redis
+#     ports:
+#       - "6380:6379"
+
+
+
+version: "3.9"
+
+services:
+  app:
+    build: .
+    container_name: fastapi-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+    env_file:
+      - .env
+
+  worker:
+    build: .
+    command: python -m app.worker
+    depends_on:
+      - redis
+    env_file:
+      - .env
+    deploy:
+      replicas: 1   # initial (we scale manually)
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6380:6379"
