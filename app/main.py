@@ -23,7 +23,6 @@ redis_client = redis.Redis(
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 @app.post("/upload")
 async def upload_image(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
