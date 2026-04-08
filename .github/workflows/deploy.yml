@@ -1,3 +1,4 @@
+#YAML
 name: Deploy to Azure
 
 on:
