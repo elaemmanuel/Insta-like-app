@@ -1,16 +1,25 @@
-# services/image_processor.py
-
-from ..database import SessionLocal
-from .. import crud
 from app.services.ai_tagging import generate_tags
+from app import crud
 
-def process_image(filename: str) -> str:
-    # Simulated AI logic (placeholder)
-    return "car, outdoor, vehicle"
 
-def process_and_save(filename: str, url: str):
-    print("Processing image:", filename)
+def process_and_save(filename: str, url: str, caption: str = ""):
+    try:
+        print(f"🔍 Generating tags for: {filename}")
 
-    tags = generate_tags(url)
+        # ✅ AI tags
+        ai_tags = generate_tags(url)
+        print("AI Tags:", ai_tags)
 
-    crud.create_image_cosmos(filename, tags, url)
+        # ✅ Combine caption + AI tags
+        combined_tags = f"{caption}, {ai_tags}" if caption else ai_tags
+
+        print("Final Tags:", combined_tags)
+
+        # ✅ Save to Cosmos DB
+        crud.create_image_cosmos(filename, combined_tags, url)
+
+        print(f"💾 Saved to Cosmos DB: {filename}")
+
+    except Exception as e:
+        print("❌ PROCESSING FAILED:", str(e))
+        raise e

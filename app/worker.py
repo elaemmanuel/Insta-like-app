@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import traceback
 from azure.servicebus import ServiceBusClient
 from dotenv import load_dotenv
 
@@ -11,42 +12,58 @@ load_dotenv()
 CONNECTION_STR = os.getenv("SERVICE_BUS_CONNECTION")
 QUEUE_NAME = os.getenv("QUEUE_NAME")
 
+if not CONNECTION_STR or not QUEUE_NAME:
+    raise Exception("Missing SERVICE_BUS_CONNECTION or QUEUE_NAME environment variables")
+
 client = ServiceBusClient.from_connection_string(CONNECTION_STR)
 
 MAX_RETRIES = 3
 
+print("🔥 WORKER FILE LOADED")
 def receive_messages():
-    print("Listening for messages...")
+    print("🚀 Worker started. Listening for messages...")
 
     with client:
-        receiver = client.get_queue_receiver(queue_name=QUEUE_NAME)
+        receiver = client.get_queue_receiver(
+            queue_name=QUEUE_NAME,
+            max_wait_time=5
+        )
 
         with receiver:
             for message in receiver:
                 try:
-                    data = json.loads(str(message))
+                    print("\n📩 New message received")
+
+                    # ✅ SAFE decoding
+                    body = b"".join(message.body).decode()
+                    print("RAW BODY:", body)
+
+                    data = json.loads(body)
+                    print("Decoded JSON:", data)
 
                     filename = data["filename"]
                     url = data["url"]
+                    caption = data.get("caption", "")
 
-                    print("Processing:", filename)
+                    print(f"🛠 Processing: {filename}")
 
-                    process_and_save(filename, url)
+                    process_and_save(filename, url, caption)
 
-                    # SUCCESS → remove from queue
+                    # ✅ SUCCESS → remove message
                     receiver.complete_message(message)
+                    print(f"✅ Completed: {filename}")
 
                 except Exception as e:
-                    print("ERROR:", e)
+                    print("❌ ERROR:", str(e))
+                    traceback.print_exc()
 
                     delivery_count = message.delivery_count
 
-                    # Dead-letter after too many retries
                     if delivery_count > MAX_RETRIES:
-                        print("Dead-lettering message:", message)
+                        print("☠️ Dead-lettering message")
                         receiver.dead_letter_message(message)
                     else:
-                        print("Retrying message...")
+                        print("🔁 Retrying message...")
                         receiver.abandon_message(message)
 
                     time.sleep(2)

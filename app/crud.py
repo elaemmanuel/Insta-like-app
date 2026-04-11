@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from . import models
+from datetime import datetime
 
 def create_image(db: Session, filename: str, tags: str):
     db_image = models.Image(filename=filename, tags=tags)
@@ -15,7 +16,7 @@ def get_images(db: Session):
 from .cosmos_db import container
 import uuid
 
-def create_image_cosmos(filename: str, tags: list, url: str):
+def create_image_cosmos(filename: str, tags: list, url: str, caption: str):
 # Check if already exists
     existing = get_image_cosmos(filename)
 
@@ -23,10 +24,11 @@ def create_image_cosmos(filename: str, tags: list, url: str):
         print("Already processed, skipping:", filename)
         return existing
     item = {
-        "id": str(uuid.uuid4()),
+        "id": filename,
         "filename": filename,
         "url": url,
         "tags": tags,
+        "caption": caption,
         "status": "processed"
     }
 
