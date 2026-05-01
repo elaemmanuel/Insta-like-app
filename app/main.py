@@ -1,103 +1,5 @@
-# from fastapi import FastAPI, UploadFile, File, HTTPException, Form
-# from fastapi.middleware.cors import CORSMiddleware
-# import json
 
-# # Services
-# from app.services.blob_service import upload_file
-# from app.service_bus import send_message
-# from app.cosmos_db import container
-
-# app = FastAPI()
-
-# # ✅ Enable CORS
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-
-# # ✅ UPLOAD IMAGE
-# @app.post("/upload")
-# async def upload_image(
-#     file: UploadFile = File(...),
-#     caption: str = Form("")
-# ):
-#     try:
-#         contents = await file.read()
-
-#         # Upload to Blob
-#         blob_url = upload_file(contents, file.filename)
-#         print("📦 BLOB URL:", blob_url)
-
-#         # Send message to Service Bus
-#         message = {
-#             "filename": file.filename,
-#             "url": blob_url,
-#             "caption": caption
-#         }
-
-#         send_message(json.dumps(message))
-#         print("📤 Message sent to queue")
-
-#         return {
-#             "message": "Uploaded successfully!",
-#             "url": blob_url
-#         }
-
-#     except Exception as e:
-#         print("❌ Upload failed:", str(e))
-#         raise HTTPException(status_code=500, detail="Upload failed")
-
-
-# # ✅ GET ALL IMAGES
-# @app.get("/images")
-# def get_images():
-#     try:
-#         images = container.read_all_items()
-
-#         result = []
-#         for item in images:
-#             result.append({
-#                 "id": item["id"],
-#                 "url": item["url"],
-#                 "caption": item.get("tags", "")
-#             })
-
-#         return result
-
-#     except Exception as e:
-#         print("❌ Fetch images failed:", str(e))
-#         raise HTTPException(status_code=500, detail="Failed to fetch images")
-
-
-# # ✅ GET SINGLE IMAGE
-# @app.get("/image/{filename}")
-# def get_image(filename: str):
-#     try:
-#         query = f"SELECT * FROM c WHERE c.id = '{filename}'"
-#         items = list(container.query_items(
-#             query=query,
-#             enable_cross_partition_query=True
-#         ))
-
-#         if not items:
-#             raise HTTPException(status_code=404, detail="Image not found")
-
-#         return items[0]
-
-#     except Exception as e:
-#         print("❌ Fetch single image failed:", str(e))
-#         raise HTTPException(status_code=500, detail="Error fetching image")
-
-
-
-
-
-
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import os
@@ -203,14 +105,16 @@ def get_images():
         # 2. Fetch from Cosmos DB
         images = container.read_all_items()
 
-        result = []
-        for item in images:
-            result.append({
-                "id": item["id"],
-                "url": item["url"],
-                "caption": item.get("caption", ""),
-                "tags": item.get("tags", [])
-            })
+        result.append({
+            "id": item["id"],
+            "url": item["url"],
+
+            # ✅ KEEP BOTH
+            "caption": item.get("caption", ""),
+            "tags": item.get("tags", []),
+
+            "comments": item.get("comments", [])
+        })
 
         # 3. Store in Redis
         if redis_client:
@@ -260,3 +164,64 @@ def get_image(filename: str):
     except Exception as e:
         print("❌ Fetch single image failed:", str(e))
         raise HTTPException(status_code=500, detail="Error fetching image")
+
+
+
+# TEMP in-memory users (replace with DB later)
+users_db = []
+
+@app.post("/register")
+def register(data: dict = Body(...)):
+    user = {
+        "email": data["email"],
+        "password": data["password"],
+        "role": "consumer"  # force role
+    }
+
+    users_db.append(user)
+    return {"message": "User registered"}
+
+
+@app.post("/login")
+def login(data: dict = Body(...)):
+    for user in users_db:
+        if user["email"] == data["email"] and user["password"] == data["password"]:
+            return {
+                "email": user["email"],
+                "role": user["role"]
+            }
+
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
+# POST COMMENT
+@app.post("/comment")
+def add_comment(data: dict):
+    filename = data["filename"]
+    comment = data["comment"]
+
+    # ✅ FIX: use id, not filename
+    query = f"SELECT * FROM c WHERE c.id = '{filename}'"
+
+    items = list(container.query_items(
+        query=query,
+        enable_cross_partition_query=True
+    ))
+
+    if not items:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    item = items[0]
+
+    if "comments" not in item:
+        item["comments"] = []
+
+    item["comments"].append(comment)
+
+    container.upsert_item(item)
+
+    # ✅ CLEAR CACHE so UI updates
+    if redis_client:
+        redis_client.delete("all_images")
+
+    return {"message": "Comment added"}
