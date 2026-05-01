@@ -162,3 +162,80 @@ def add_comment(data: dict):
         redis_client.delete("all_images")
 
     return {"message": "Comment added"}
+
+
+@app.post("/register")
+def register(data: dict = Body(...)):
+    try:
+        email = data["email"].strip().lower()
+        password = data["password"]
+
+        print("📥 Register attempt:", email)
+
+        # ✅ Check if user exists
+        query = f"SELECT * FROM c WHERE c.email = '{email}'"
+
+        existing = list(users_container.query_items(
+            query=query,
+            enable_cross_partition_query=True
+        ))
+
+        if existing:
+            raise HTTPException(status_code=400, detail="User already exists")
+
+        # ✅ Create user
+        user = {
+            "id": email,
+            "email": email,
+            "password": password,
+            "role": data.get("role", "consumer")
+        }
+
+        print("💾 Saving user:", user)
+
+        users_container.create_item(user)
+
+        print("✅ User saved to Cosmos")
+
+        return {"message": "User registered"}
+
+    except Exception as e:
+        print("❌ REGISTER ERROR:", str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/login")
+def login(data: dict = Body(...)):
+    try:
+        email = data["email"].strip().lower()
+        password = data["password"]
+
+        print("🔐 Login attempt:", email)
+
+        query = f"SELECT * FROM c WHERE c.email = '{email}'"
+
+        users = list(users_container.query_items(
+            query=query,
+            enable_cross_partition_query=True
+        ))
+
+        print("👀 Found users:", users)
+
+        if not users:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        user = users[0]
+
+        if user["password"] != password:
+            raise HTTPException(status_code=401, detail="Invalid password")
+
+        print("✅ Login success")
+
+        return {
+            "email": user["email"],
+            "role": user["role"]
+        }
+
+    except Exception as e:
+        print("❌ LOGIN ERROR:", str(e))
+        raise HTTPException(status_code=500, detail=str(e))

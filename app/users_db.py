@@ -2,21 +2,19 @@ from azure.cosmos import CosmosClient
 import os
 from dotenv import load_dotenv
 
-# Load environment variables
+# ✅ Load env
 load_dotenv()
 
 COSMOS_ENDPOINT = os.getenv("COSMOS_ENDPOINT")
 COSMOS_KEY = os.getenv("COSMOS_KEY")
 
-# ✅ CONNECT
+# ✅ Connect
 client = CosmosClient(COSMOS_ENDPOINT, COSMOS_KEY)
 
-# ✅ HARDCODE DB NAME (same as your working one)
+# ✅ USE SAME DB AS IMAGES
 DATABASE_NAME = "image-db"
-
-print("✅ Connected to DB:", DATABASE_NAME)
 
 database = client.get_database_client(DATABASE_NAME)
 
-# ✅ USERS CONTAINER (create if not exists in Azure)
+# ✅ USERS CONTAINER
 users_container = database.get_container_client("users")
