@@ -9,6 +9,7 @@ import redis
 from app.services.blob_service import upload_file
 from app.service_bus import send_message
 from app.cosmos_db import container
+from app.users_db import users_container
 
 app = FastAPI()
 
@@ -103,18 +104,22 @@ def get_images():
         print("🐢 Cache miss (all images)")
 
         # 2. Fetch from Cosmos DB
-        images = container.read_all_items()
+        images = list(container.read_all_items())
 
-        result.append({
-            "id": item["id"],
-            "url": item["url"],
+        result = []
 
-            # ✅ KEEP BOTH
-            "caption": item.get("caption", ""),
-            "tags": item.get("tags", []),
+        for item in images:
+            result.append({
+                "id": item["id"],
+                "url": item["url"],
 
-            "comments": item.get("comments", [])
-        })
+                # ✅ KEEP BOTH (VERY IMPORTANT)
+                "caption": item.get("caption", ""),
+                "tags": item.get("tags", []),
+
+                # ✅ COMMENTS (for UI)
+                "comments": item.get("comments", [])
+            })
 
         # 3. Store in Redis
         if redis_client:
@@ -125,74 +130,6 @@ def get_images():
     except Exception as e:
         print("❌ Fetch images failed:", str(e))
         raise HTTPException(status_code=500, detail="Failed to fetch images")
-
-
-# =========================
-# ✅ GET SINGLE IMAGE (WITH CACHE)
-# =========================
-@app.get("/image/{filename}")
-def get_image(filename: str):
-    try:
-        cache_key = f"image:{filename}"
-
-        # 1. Check Redis
-        cached = redis_client.get(cache_key) if redis_client else None
-        if cached:
-            print(f"⚡ Cache hit ({filename})")
-            return json.loads(cached)
-
-        print(f"🐢 Cache miss ({filename})")
-
-        # 2. Query Cosmos DB
-        query = f"SELECT * FROM c WHERE c.id = '{filename}'"
-        items = list(container.query_items(
-            query=query,
-            enable_cross_partition_query=True
-        ))
-
-        if not items:
-            raise HTTPException(status_code=404, detail="Image not found")
-
-        result = items[0]
-
-        # 3. Store in Redis
-        if redis_client:
-            redis_client.setex(cache_key, CACHE_TTL, json.dumps(result))
-
-        return result
-
-    except Exception as e:
-        print("❌ Fetch single image failed:", str(e))
-        raise HTTPException(status_code=500, detail="Error fetching image")
-
-
-
-# TEMP in-memory users (replace with DB later)
-users_db = []
-
-@app.post("/register")
-def register(data: dict = Body(...)):
-    user = {
-        "email": data["email"],
-        "password": data["password"],
-        "role": "consumer"  # force role
-    }
-
-    users_db.append(user)
-    return {"message": "User registered"}
-
-
-@app.post("/login")
-def login(data: dict = Body(...)):
-    for user in users_db:
-        if user["email"] == data["email"] and user["password"] == data["password"]:
-            return {
-                "email": user["email"],
-                "role": user["role"]
-            }
-
-    raise HTTPException(status_code=401, detail="Invalid credentials")
-
 
 # POST COMMENT
 @app.post("/comment")
