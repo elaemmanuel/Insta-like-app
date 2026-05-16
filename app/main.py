@@ -1,9 +1,358 @@
 
+# from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body
+# from fastapi.middleware.cors import CORSMiddleware
+# import json
+# import os
+# import redis
+
+
+# # Services
+# from app.services.blob_service import upload_file
+# from app.service_bus import send_message
+# from app.cosmos_db import container
+# from app.users_db import users_container
+# from dotenv import load_dotenv
+
+# import logging
+
+# logging.basicConfig(level=logging.INFO)
+
+# logger = logging.getLogger(__name__)
+
+# # Load environment variables
+# load_dotenv()
+
+
+# app = FastAPI()
+
+# # ✅ Enable CORS
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
+# # =========================
+# # ✅ REDIS CONFIG (SAFE)
+# # =========================
+# redis_client = None
+
+# try:
+#     redis_client = redis.Redis(
+#     host=os.getenv("REDIS_HOST"),
+#     port=6380,
+#     password=os.getenv("REDIS_KEY"),
+#     ssl=True,
+#     decode_responses=True,
+#     socket_connect_timeout=7
+# )
+    
+#     # # Test connection
+#     redis_client.ping()
+#     logger.info("Redis connected")
+
+# except Exception as e:
+#     logger.error(f"Redis disabled: {str(e)}")
+#     redis_client = None
+
+# CACHE_TTL = 60
+
+
+# # =========================
+# # ✅ UPLOAD IMAGE
+# # =========================
+# @app.post("/upload")
+# async def upload_image(
+#     file: UploadFile = File(...),
+#     caption: str = Form(""),
+#     title: str = Form(""),
+#     location: str = Form(""),
+#     people: str = Form(""),
+#     user_email: str = Form("")
+# ):
+#     try:
+#         contents = await file.read()
+
+#         # ✅ CHECK USER ROLE
+#         user_query = f"SELECT * FROM c WHERE c.email = '{user_email}'"
+#         users = list(users_container.query_items(
+#             query=user_query,
+#             enable_cross_partition_query=True
+#         ))
+#         print("UPLOAD USER EMAIL:", user_email)
+
+#         if not users:
+#             raise HTTPException(status_code=404, detail="User not found")
+
+#         user = users[0]
+
+#         if user["role"] != "creator":
+#             raise HTTPException(status_code=403, detail="Only creators can upload")
+
+#         # Upload to Blob
+#         blob_url = upload_file(contents, file.filename)
+
+#         # Detect type
+#         file_type = "video" if file.content_type.startswith("video") else "image"
+
+#         # Send message to queue
+#         people_list = [p.strip() for p in people.split(",") if p.strip()]
+
+#         message = {
+#             "filename": file.filename,
+#             "url": blob_url,
+#             "caption": caption,
+#             "title": title,
+#             "location": location,
+#             "people": people_list,
+#             "created_by": user_email,
+#             "type": file_type
+#         }
+
+#         send_message(json.dumps(message))
+
+#         # Clear cache
+#         if redis_client:
+#             redis_client.delete("all_images")
+#             redis_client.delete(f"image:{file.filename}")
+
+#         return {
+#             "message": "Uploaded successfully!",
+#             "url": blob_url
+#         }
+
+#     except Exception as e:
+#         logger.error(f"Upload failed: {str(e)}")
+#         raise HTTPException(status_code=500, detail="Upload failed")
+
+
+# @app.get("/image/{filename}")
+# def get_image(filename: str):
+#     try:
+#         cache_key = f"image:{filename}"
+
+#         # ✅ CHECK CACHE
+#         if redis_client:
+#             cached = redis_client.get(cache_key)
+#             if cached:
+#                 print(f"⚡ Cache hit ({filename})")
+#                 return json.loads(cached)
+
+#         print(f"🐢 Cache miss ({filename})")
+
+#         query = f"SELECT * FROM c WHERE c.id = '{filename}'"
+
+#         items = list(container.query_items(
+#             query=query,
+#             enable_cross_partition_query=True
+#         ))
+
+#         if not items:
+#             raise HTTPException(status_code=404, detail="Image not found")
+
+#         item = items[0]
+
+#         result = {
+#             "id": item["id"],
+#             "url": item["url"],
+#             "caption": item.get("caption", ""),
+#             "tags": item.get("tags", []),
+#             "comments": item.get("comments", [])
+#         }
+
+#         # ✅ STORE CACHE
+#         if redis_client:
+#             redis_client.setex(cache_key, CACHE_TTL, json.dumps(result))
+
+#         return result
+
+#     except Exception as e:
+#         print("❌ Fetch single image failed:", str(e))
+#         raise HTTPException(status_code=500, detail="Error fetching image")
+
+# # =========================
+# # ✅ GET ALL IMAGES (WITH CACHE)
+# # =========================
+# @app.get("/images")
+# def get_images():
+#     try:
+#         cache_key = "all_images"
+
+#         # ✅ CHECK CACHE
+#         if redis_client:
+#             cached = redis_client.get(cache_key)
+#             if cached:
+#                 print("⚡ Cache hit (all images)")
+#                 return json.loads(cached)
+
+#         print("🐢 Cache miss (all images)")
+
+#         images = list(container.read_all_items())
+
+#         result = []
+
+#         for item in images:
+#             result.append({
+#                 "id": item["id"],
+#                 "url": item["url"],
+#                 "caption": item.get("caption", ""),
+#                 "tags": item.get("tags", []),
+#                 "comments": item.get("comments", []),
+#                 "created_by": item.get("created_by", "unknown")
+#             })
+
+#         # ✅ STORE CACHE
+#         if redis_client:
+#             redis_client.setex(cache_key, CACHE_TTL, json.dumps(result))
+
+#         return result
+
+#     except Exception as e:
+#         print("❌ Fetch images failed:", str(e))
+#         raise HTTPException(status_code=500, detail="Failed to fetch images")
+
+
+# # POST COMMENT
+# @app.post("/comment")
+# def add_comment(data: dict):
+#     filename = data["filename"]
+#     comment = data["comment"]
+#     user_email = data.get("user_email")
+
+#     if not user_email:
+#         raise HTTPException(status_code=401, detail="User not provided")
+
+#     # ✅ CHECK USER ROLE
+#     user_query = f"SELECT * FROM c WHERE c.email = '{user_email}'"
+#     users = list(users_container.query_items(
+#         query=user_query,
+#         enable_cross_partition_query=True
+#     ))
+
+#     if not users:
+#         raise HTTPException(status_code=404, detail="User not found")
+
+#     user = users[0]
+
+#     # 🚫 BLOCK CREATORS
+#     if user["role"] != "consumer":
+#         raise HTTPException(status_code=403, detail="Only consumers can comment")
+
+#     # ✅ GET IMAGE
+#     query = f"SELECT * FROM c WHERE c.id = '{filename}'"
+#     items = list(container.query_items(
+#         query=query,
+#         enable_cross_partition_query=True
+#     ))
+
+#     if not items:
+#         raise HTTPException(status_code=404, detail="Image not found")
+
+#     item = items[0]
+
+#     if "comments" not in item:
+#         item["comments"] = []
+
+#     item["comments"].append(comment)
+
+#     container.upsert_item(item)
+
+#     # ✅ CLEAR CACHE
+#     # ✅ SMART INVALIDATION
+#     if redis_client:
+#         redis_client.delete("all_images")
+#         redis_client.delete(f"image:{filename}")
+
+#     return {"message": "Comment added"}
+
+
+# @app.post("/register")
+# def register(data: dict = Body(...)):
+#     email = data["email"]
+
+#     # 🔍 Check if user already exists
+#     query = f"SELECT * FROM c WHERE c.email = '{email}'"
+#     existing = list(users_container.query_items(
+#         query=query,
+#         enable_cross_partition_query=True
+#     ))
+
+#     if existing:
+#         raise HTTPException(status_code=400, detail="User already exists")
+
+#     # ✅ TAKE ROLE FROM FRONTEND
+#     role = data.get("role", "consumer")
+
+#     # Optional safety
+#     if role not in ["creator", "consumer"]:
+#         role = "consumer"
+
+#     user = {
+#         "id": email,
+#         "email": email,
+#         "password": data["password"],
+#         "role": role  # ✅ FIXED HERE
+#     }
+
+#     print("REGISTER ROLE:", role)  # DEBUG
+
+#     users_container.create_item(user)
+
+#     return {"message": "User registered"}
+
+
+# @app.post("/login")
+# def login(data: dict = Body(...)):
+#     email = data["email"].strip().lower()
+#     password = data["password"]
+
+#     print("🔐 Login attempt:", email)
+
+#     query = f"SELECT * FROM c WHERE c.email = '{email}'"
+
+#     users = list(users_container.query_items(
+#         query=query,
+#         enable_cross_partition_query=True
+#     ))
+
+#     if not users:
+#         raise HTTPException(status_code=401, detail="User not found")
+
+#     user = users[0]
+
+#     if user["password"] != password:
+#         raise HTTPException(status_code=401, detail="Invalid password")
+
+#     print("✅ Login success")
+
+#     return {
+#         "email": user["email"],
+#         "role": user["role"]
+#     }
+
+
+# @app.get("/health")
+# def health():
+#     return {
+#         "status": "healthy"
+#     }
+
+
+
+
+
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Body
 from fastapi.middleware.cors import CORSMiddleware
+
 import json
 import os
 import redis
+import logging
+
+from dotenv import load_dotenv
 
 # Services
 from app.services.blob_service import upload_file
@@ -11,9 +360,33 @@ from app.service_bus import send_message
 from app.cosmos_db import container
 from app.users_db import users_container
 
+
+# =========================
+# LOAD ENV
+# =========================
+load_dotenv()
+
+
+# =========================
+# LOGGING CONFIG
+# =========================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
+logger = logging.getLogger(__name__)
+
+
+# =========================
+# FASTAPI INIT
+# =========================
 app = FastAPI()
 
-# ✅ Enable CORS
+
+# =========================
+# CORS
+# =========================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,8 +395,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # =========================
-# ✅ REDIS CONFIG (SAFE)
+# REDIS CONFIG
 # =========================
 redis_client = None
 
@@ -34,76 +408,220 @@ try:
         password=os.getenv("REDIS_KEY"),
         ssl=True,
         decode_responses=True,
-        socket_connect_timeout=2
+        socket_connect_timeout=7
     )
 
-    # Test connection
     redis_client.ping()
-    print("✅ Redis connected")
+
+    logger.info("Redis connected successfully")
 
 except Exception as e:
-    print("⚠️ Redis disabled:", str(e))
+    logger.error(f"Redis disabled: {str(e)}")
     redis_client = None
+
 
 CACHE_TTL = 60
 
 
 # =========================
-# ✅ UPLOAD IMAGE
+# HEALTH CHECK
+# =========================
+@app.get("/health")
+def health():
+    redis_status = "connected"
+
+    try:
+        if redis_client:
+            redis_client.ping()
+        else:
+            redis_status = "disabled"
+
+    except Exception:
+        redis_status = "failed"
+
+    return {
+        "status": "healthy",
+        "redis": redis_status
+    }
+
+
+# =========================
+# UPLOAD IMAGE
 # =========================
 @app.post("/upload")
 async def upload_image(
     file: UploadFile = File(...),
-    caption: str = Form("")
+    caption: str = Form(""),
+    title: str = Form(""),
+    location: str = Form(""),
+    people: str = Form(""),
+    user_email: str = Form("")
 ):
     try:
+        logger.info(f"Upload started by {user_email}")
+
         contents = await file.read()
 
-        # Upload to Blob
-        blob_url = upload_file(contents, file.filename)
-        print("📦 BLOB URL:", blob_url)
+        # CHECK USER
+        user_query = f"SELECT * FROM c WHERE c.email = '{user_email}'"
 
-        # Send message to Service Bus
+        users = list(users_container.query_items(
+            query=user_query,
+            enable_cross_partition_query=True
+        ))
+
+        if not users:
+            logger.warning(f"Upload blocked - user not found: {user_email}")
+            raise HTTPException(status_code=404, detail="User not found")
+
+        user = users[0]
+
+        if user["role"] != "creator":
+            logger.warning(f"Upload blocked - non creator: {user_email}")
+            raise HTTPException(status_code=403, detail="Only creators can upload")
+
+        # UPLOAD TO BLOB
+        blob_url = upload_file(contents, file.filename)
+
+        logger.info(f"Blob uploaded: {blob_url}")
+
+        # DETECT TYPE
+        file_type = (
+            "video"
+            if file.content_type.startswith("video")
+            else "image"
+        )
+
+        people_list = [
+            p.strip()
+            for p in people.split(",")
+            if p.strip()
+        ]
+
+        # SERVICE BUS MESSAGE
         message = {
             "filename": file.filename,
             "url": blob_url,
-            "caption": caption
+            "caption": caption,
+            "title": title,
+            "location": location,
+            "people": people_list,
+            "created_by": user_email,
+            "type": file_type
         }
 
         send_message(json.dumps(message))
-        print("📤 Message sent to queue")
 
-        # ❗ Invalidate cache after new upload
+        logger.info(f"Service Bus message sent: {file.filename}")
+
+        # CACHE INVALIDATION
         if redis_client:
             redis_client.delete("all_images")
+            redis_client.delete(f"image:{file.filename}")
+
+            logger.info("Redis cache invalidated")
 
         return {
             "message": "Uploaded successfully!",
             "url": blob_url
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("❌ Upload failed:", str(e))
-        raise HTTPException(status_code=500, detail="Upload failed")
+        logger.error(f"Upload failed: {str(e)}")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Upload failed"
+        )
 
 
 # =========================
-# ✅ GET ALL IMAGES (WITH CACHE)
+# GET SINGLE IMAGE
+# =========================
+@app.get("/image/{filename}")
+def get_image(filename: str):
+    try:
+        cache_key = f"image:{filename}"
+
+        # CACHE CHECK
+        if redis_client:
+            cached = redis_client.get(cache_key)
+
+            if cached:
+                logger.info(f"Redis cache hit: {filename}")
+                return json.loads(cached)
+
+        logger.info(f"Redis cache miss: {filename}")
+
+        query = f"SELECT * FROM c WHERE c.id = '{filename}'"
+
+        items = list(container.query_items(
+            query=query,
+            enable_cross_partition_query=True
+        ))
+
+        if not items:
+            logger.warning(f"Image not found: {filename}")
+
+            raise HTTPException(
+                status_code=404,
+                detail="Image not found"
+            )
+
+        item = items[0]
+
+        result = {
+            "id": item["id"],
+            "url": item["url"],
+            "caption": item.get("caption", ""),
+            "tags": item.get("tags", []),
+            "comments": item.get("comments", []),
+            "created_by": item.get("created_by", "unknown")
+        }
+
+        # STORE CACHE
+        if redis_client:
+            redis_client.setex(
+                cache_key,
+                CACHE_TTL,
+                json.dumps(result)
+            )
+
+        return result
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.error(f"Fetch single image failed: {str(e)}")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Error fetching image"
+        )
+
+
+# =========================
+# GET ALL IMAGES
 # =========================
 @app.get("/images")
 def get_images():
     try:
         cache_key = "all_images"
 
-        # 1. Check Redis
-        cached = redis_client.get(cache_key) if redis_client else None
-        if cached:
-            print("⚡ Cache hit (all images)")
-            return json.loads(cached)
+        # CACHE CHECK
+        if redis_client:
+            cached = redis_client.get(cache_key)
 
-        print("🐢 Cache miss (all images)")
+            if cached:
+                logger.info("Redis cache hit: all_images")
+                return json.loads(cached)
 
-        # 2. Fetch from Cosmos DB
+        logger.info("Redis cache miss: all_images")
+
         images = list(container.read_all_items())
 
         result = []
@@ -112,67 +630,138 @@ def get_images():
             result.append({
                 "id": item["id"],
                 "url": item["url"],
-
-                # ✅ KEEP BOTH (VERY IMPORTANT)
                 "caption": item.get("caption", ""),
                 "tags": item.get("tags", []),
-
-                # ✅ COMMENTS (for UI)
-                "comments": item.get("comments", [])
+                "comments": item.get("comments", []),
+                "created_by": item.get("created_by", "unknown")
             })
 
-        # 3. Store in Redis
+        # STORE CACHE
         if redis_client:
-            redis_client.setex(cache_key, CACHE_TTL, json.dumps(result))
+            redis_client.setex(
+                cache_key,
+                CACHE_TTL,
+                json.dumps(result)
+            )
+
+        logger.info(f"Fetched {len(result)} images")
 
         return result
 
     except Exception as e:
-        print("❌ Fetch images failed:", str(e))
-        raise HTTPException(status_code=500, detail="Failed to fetch images")
+        logger.error(f"Fetch images failed: {str(e)}")
 
-# POST COMMENT
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to fetch images"
+        )
+
+
+# =========================
+# ADD COMMENT
+# =========================
 @app.post("/comment")
 def add_comment(data: dict):
-    filename = data["filename"]
-    comment = data["comment"]
 
-    # ✅ FIX: use id, not filename
-    query = f"SELECT * FROM c WHERE c.id = '{filename}'"
+    try:
+        filename = data["filename"]
+        comment = data["comment"]
+        user_email = data.get("user_email")
 
-    items = list(container.query_items(
-        query=query,
-        enable_cross_partition_query=True
-    ))
+        logger.info(f"Comment attempt by {user_email}")
 
-    if not items:
-        raise HTTPException(status_code=404, detail="Image not found")
+        if not user_email:
+            raise HTTPException(
+                status_code=401,
+                detail="User not provided"
+            )
 
-    item = items[0]
+        # CHECK USER
+        user_query = f"SELECT * FROM c WHERE c.email = '{user_email}'"
 
-    if "comments" not in item:
-        item["comments"] = []
+        users = list(users_container.query_items(
+            query=user_query,
+            enable_cross_partition_query=True
+        ))
 
-    item["comments"].append(comment)
+        if not users:
+            logger.warning(f"Comment blocked - user not found: {user_email}")
 
-    container.upsert_item(item)
+            raise HTTPException(
+                status_code=404,
+                detail="User not found"
+            )
 
-    # ✅ CLEAR CACHE so UI updates
-    if redis_client:
-        redis_client.delete("all_images")
+        user = users[0]
 
-    return {"message": "Comment added"}
+        # BLOCK CREATORS
+        if user["role"] != "consumer":
+            logger.warning(f"Comment blocked - creator attempted comment")
+
+            raise HTTPException(
+                status_code=403,
+                detail="Only consumers can comment"
+            )
+
+        # GET IMAGE
+        query = f"SELECT * FROM c WHERE c.id = '{filename}'"
+
+        items = list(container.query_items(
+            query=query,
+            enable_cross_partition_query=True
+        ))
+
+        if not items:
+            raise HTTPException(
+                status_code=404,
+                detail="Image not found"
+            )
+
+        item = items[0]
+
+        if "comments" not in item:
+            item["comments"] = []
+
+        item["comments"].append(comment)
+
+        container.upsert_item(item)
+
+        logger.info(f"Comment added to {filename}")
+
+        # CACHE INVALIDATION
+        if redis_client:
+            redis_client.delete("all_images")
+            redis_client.delete(f"image:{filename}")
+
+            logger.info("Redis cache invalidated")
+
+        return {
+            "message": "Comment added"
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.error(f"Comment failed: {str(e)}")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to add comment"
+        )
 
 
+# =========================
+# REGISTER
+# =========================
 @app.post("/register")
 def register(data: dict = Body(...)):
+
     try:
-        email = data["email"].strip().lower()
-        password = data["password"]
+        email = data["email"]
 
-        print("📥 Register attempt:", email)
+        logger.info(f"Registration attempt: {email}")
 
-        # ✅ Check if user exists
         query = f"SELECT * FROM c WHERE c.email = '{email}'"
 
         existing = list(users_container.query_items(
@@ -181,36 +770,56 @@ def register(data: dict = Body(...)):
         ))
 
         if existing:
-            raise HTTPException(status_code=400, detail="User already exists")
+            logger.warning(f"Registration blocked - user exists: {email}")
 
-        # ✅ Create user
+            raise HTTPException(
+                status_code=400,
+                detail="User already exists"
+            )
+
+        role = data.get("role", "consumer")
+
+        if role not in ["creator", "consumer"]:
+            role = "consumer"
+
         user = {
             "id": email,
             "email": email,
-            "password": password,
-            "role": data.get("role", "consumer")
+            "password": data["password"],
+            "role": role
         }
-
-        print("💾 Saving user:", user)
 
         users_container.create_item(user)
 
-        print("✅ User saved to Cosmos")
+        logger.info(f"User registered successfully: {email}")
 
-        return {"message": "User registered"}
+        return {
+            "message": "User registered"
+        }
+
+    except HTTPException:
+        raise
 
     except Exception as e:
-        print("❌ REGISTER ERROR:", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Registration failed: {str(e)}")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Registration failed"
+        )
 
 
+# =========================
+# LOGIN
+# =========================
 @app.post("/login")
 def login(data: dict = Body(...)):
+
     try:
         email = data["email"].strip().lower()
         password = data["password"]
 
-        print("🔐 Login attempt:", email)
+        logger.info(f"Login attempt: {email}")
 
         query = f"SELECT * FROM c WHERE c.email = '{email}'"
 
@@ -219,23 +828,38 @@ def login(data: dict = Body(...)):
             enable_cross_partition_query=True
         ))
 
-        print("👀 Found users:", users)
-
         if not users:
-            raise HTTPException(status_code=401, detail="User not found")
+            logger.warning(f"Login failed - user not found: {email}")
+
+            raise HTTPException(
+                status_code=401,
+                detail="User not found"
+            )
 
         user = users[0]
 
         if user["password"] != password:
-            raise HTTPException(status_code=401, detail="Invalid password")
+            logger.warning(f"Login failed - invalid password: {email}")
 
-        print("✅ Login success")
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid password"
+            )
+
+        logger.info(f"Login success: {email}")
 
         return {
             "email": user["email"],
             "role": user["role"]
         }
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        print("❌ LOGIN ERROR:", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Login failed: {str(e)}")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Login failed"
+        )

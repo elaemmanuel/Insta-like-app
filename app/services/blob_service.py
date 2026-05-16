@@ -63,7 +63,7 @@ def upload_file(file_bytes, filename):
     )
 
     # ✅ 6. Generate URL
-    blob_url = f"https://{blob_service_client.account_name}.blob.core.windows.net/{BLOB_CONTAINER}/{safe_filename}"
+    blob_url = f"https://media.elariapp.co.uk/{safe_filename}"
 
     print("FINAL BLOB URL:", blob_url)
 

@@ -16,20 +16,34 @@ def get_images(db: Session):
 from .cosmos_db import container
 import uuid
 
-def create_image_cosmos(filename: str, tags: list, url: str, caption: str):
-# Check if already exists
+def create_image_cosmos(
+    filename,
+    tags,
+    url,
+    caption="",
+    title="",
+    location="",
+    people=None,
+    created_by="",
+    file_type="image"
+):
     existing = get_image_cosmos(filename)
 
     if existing:
         print("Already processed, skipping:", filename)
         return existing
+
     item = {
         "id": filename,
-        "filename": filename,
         "url": url,
         "tags": tags,
         "caption": caption,
-        "status": "processed"
+        "title": title,
+        "location": location,
+        "people": people or [],
+        "created_by": created_by,
+        "type": file_type,
+        "comments": []
     }
 
     print("Saving to Cosmos DB:", item)
@@ -37,6 +51,7 @@ def create_image_cosmos(filename: str, tags: list, url: str, caption: str):
     container.create_item(body=item)
 
     return item
+
 
 def get_image_cosmos(filename: str):
     query = "SELECT * FROM c WHERE c.filename=@filename"
